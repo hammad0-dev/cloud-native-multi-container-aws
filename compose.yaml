@@ -1,0 +1,54 @@
+name: document-vault
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "3"}
+services:
+  app:
+    image: ${APP_IMAGE:-document-vault:local}
+    build: {context: ., dockerfile: app/Dockerfile}
+    environment:
+      DB_HOST: ${DB_HOST:?Set DB_HOST}
+      DB_NAME: vault
+      DB_USER: vault
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      FLASK_SECRET_KEY_FILE: /run/secrets/flask_secret
+      DB_TLS: ${DB_TLS:-true}
+      DB_SSL_CA: /certs/global-bundle.pem
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:?Set S3_BUCKET}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+    secrets: [db_password, flask_secret]
+    volumes: ["./certs:/certs:ro"]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+  nginx:
+    image: nginx:1.30.6-alpine
+    ports: ["${HTTP_BIND:-127.0.0.1}:8080:8080"]
+    volumes: ["./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro"]
+    depends_on:
+      app: {condition: service_healthy}
+    read_only: true
+    user: "101:101"
+    tmpfs: ["/var/cache/nginx:uid=101,gid=101,mode=0700", "/var/run:uid=101,gid=101,mode=0700", "/tmp:mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+secrets:
+  db_password: {file: "${SECRETS_DIR:-./.secrets}/db_password"}
+  flask_secret: {file: "${SECRETS_DIR:-./.secrets}/flask_secret"}

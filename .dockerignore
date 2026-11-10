@@ -1,0 +1,13 @@
+.git
+.env
+.secrets
+.venv
+**/__pycache__
+infrastructure
+validation-private
+
+.env*
+.aws
+validation-*.log
+
+.runtime-secrets/

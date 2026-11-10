@@ -1,0 +1,11 @@
+# Architecture decisions
+
+The README diagram shows the AWS data flow. Terraform creates one VPC, an internet gateway, a public EC2 subnet and two private subnets in distinct availability zones for the DB subnet group. Explicit private route tables have only VPC-local routes. RDS is single-AZ despite its subnet group spanning two AZs. Private RDS needs no general internet route for this workload. There is no NAT gateway.
+
+EC2 gets a public IPv4 address and reaches package/image registries, SSM, Secrets Manager and S3 through the internet gateway. Its security group permits only trusted-CIDR TCP 8080 inbound and outbound IPv4. There is no SSH listener rule, public application port 8000/5000, Docker API rule or public MySQL port. RDS allows 3306 only from the app security group. Security groups are stateful.
+
+Gunicorn has two workers; each uses SQLAlchemy pool pre-ping and connection recycle. A temporary DB outage produces failing readiness checks, rather than a migration on every worker startup. The app retries new DB connections on subsequent requests/health probes. Run migrations as a separate release step. Compose restarts crashed processes, but an unhealthy process is not automatically restarted merely because its health check fails.
+
+Health probes query MySQL, not S3. `verify.sh` performs real object put/get/delete only when deliberately run against the configured cloud stack. Upload size is bounded; downloads buffer at most the application-upload limit under normal operation. Gunicorn workers and Nginx share only a private Docker network. Container filesystems are disposable; RDS and S3 hold AWS application data. Development MySQL uses a named volume, while the Moto service is intentionally ephemeral.
+
+No automatic cross-service transaction exists. Upload writes S3 then commits metadata; a failed DB commit attempts object deletion. A crash between writes or failed compensation can leave an orphan. Delete removes S3 first, then metadata; a DB failure can leave a row pointing to a missing object. Retrying delete is safe because unversioned S3 deletion is idempotent. An operator must reconcile orphan objects using a separately authorized inventory role with ListBucket; the runtime role intentionally cannot list the bucket. No automated orphan deletion is provided.
